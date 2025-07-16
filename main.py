@@ -14,24 +14,52 @@ notion = Client(auth=NOTION_API_KEY)
 def scrape_cmoa_data(url):
     """コミックシーモアのページからデータを取得する"""
     try:
-        response = requests.get(url, timeout=10) # タイムアウトを追加
+        # --- 変更点: 除外フレーズやリネーム用の設定を追加 ---
+        exclusion_phrases = [
+            'コミックシーモアなら期間限定1巻無料！',
+            'コミックシーモアなら期間限定1巻立読み増量中！',
+            'コミックシーモアなら期間限定1巻値引き！'
+        ]
+        genre_rename_map = {
+            '少年マンガ': '少年',
+            '青年マンガ': '青年',
+            '少女マンガ': '少女',
+            '女性マンガ': '女性'
+        }
+        # ----------------------------------------------
+
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
+        # 1. あらすじ
         synopsis = ""
         script_tag = soup.find("script", type="application/ld+json")
         if script_tag:
-            # 文字化け対策で一度bytesにエンコードしてからデコード
             clean_string = script_tag.string.encode('utf-8').decode('utf-8')
             json_data = json.loads(clean_string)
-            synopsis = json_data.get("description", "").replace("<br>", "\n").strip()
+            synopsis = json_data.get("description", "")
+            
+            # --- 変更点: あらすじの整形処理を追加 ---
+            synopsis = synopsis.replace("<br>", "\n") # brタグを改行に
+            for phrase in exclusion_phrases:
+                synopsis = synopsis.replace(phrase, "") # 除外フレーズを削除
+            synopsis = synopsis.strip() # 前後の空白を削除
+            # ---------------------------------------
 
+        # 2. ジャンル
         genres = []
         genre_tags = soup.select('.category_line_f_r_l a[href*="/genre/"]')
         for tag in genre_tags:
-            genre_text = tag.get_text(strip=True).split('(')[0]
-            genres.append(genre_text)
+            genre_text = tag.get_text(strip=True)
+            
+            # --- 変更点: ジャンル名の整形とリネーム処理 ---
+            cleaned_genre = genre_text.split('(')[0].strip() # (1位)などを削除
+            renamed_genre = genre_rename_map.get(cleaned_genre, cleaned_genre) # リネーム
+            genres.append(renamed_genre)
+            # ---------------------------------------------
         
+        # 3. 雑誌・レーベル
         magazine = ""
         magazine_tag = soup.select_one('span.brCramb_m > a[href*="/magazine/"]')
         if magazine_tag:
@@ -84,7 +112,7 @@ def main():
 
         cmoa_data = scrape_cmoa_data(url)
 
-        if cmoa_data and cmoa_data["synopsis"]: # あらすじが取得できた場合のみ更新
+        if cmoa_data and cmoa_data["synopsis"]:
             try:
                 notion.pages.update(
                     page_id=page_id,
