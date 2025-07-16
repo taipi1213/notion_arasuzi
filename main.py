@@ -72,18 +72,19 @@ def scrape_cmoa_data(url):
             if publisher_tag:
                 magazine = publisher_tag.get_text(strip=True)
         
-        # === 変更点: 作品タグを取得する処理を追加 ===
+        # 4. 作品タグ取得
         tags = []
-        tag_elements = soup.select('a[href*="/tag/"]')
+        # === 変更点: タグ取得のセレクタをより正確なものに修正 ===
+        tag_elements = soup.select('div.tag_area a[href*="/tag/"]')
+        # =======================================================
         for tag_element in tag_elements:
             tags.append(tag_element.get_text(strip=True))
-        # =======================================
 
         return {
             "synopsis": synopsis,
             "genres": list(dict.fromkeys(genres)),
             "magazine": magazine,
-            "tags": list(dict.fromkeys(tags)) # 順番を保持しつつ重複を削除
+            "tags": list(dict.fromkeys(tags))
         }
     except requests.exceptions.RequestException as e:
         print(f"URLへのアクセスに失敗しました: {url}, Error: {e}")
@@ -125,14 +126,12 @@ def main():
 
         if cmoa_data and cmoa_data["synopsis"]:
             try:
-                # === 変更点: Notionに書き込むデータに「タグ」を追加 ===
                 properties_to_update = {
                     "あらすじ": {"rich_text": [{"text": {"content": cmoa_data["synopsis"]}}]},
                     "ジャンル": {"multi_select": [{"name": g} for g in cmoa_data["genres"]]},
                     "雑誌・レーベル": {"multi_select": [{"name": m} for m in [cmoa_data["magazine"]] if m]},
                     "タグ": {"multi_select": [{"name": t} for t in cmoa_data["tags"]]}
                 }
-                # ===============================================
 
                 notion.pages.update(
                     page_id=page_id,
