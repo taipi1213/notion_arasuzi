@@ -14,7 +14,6 @@ notion = Client(auth=NOTION_API_KEY)
 def scrape_cmoa_data(url):
     """コミックシーモアのページからデータを取得する"""
     try:
-        # --- 変更点: 除外フレーズやリネーム用の設定を追加 ---
         exclusion_phrases = [
             'コミックシーモアなら期間限定1巻無料！',
             'コミックシーモアなら期間限定1巻立読み増量中！',
@@ -26,40 +25,50 @@ def scrape_cmoa_data(url):
             '少女マンガ': '少女',
             '女性マンガ': '女性'
         }
-        # ----------------------------------------------
 
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # 1. あらすじ
+        # 1. あらすじ取得
         synopsis = ""
+        # 方法A: ld+jsonから取得を試みる
         script_tag = soup.find("script", type="application/ld+json")
         if script_tag:
-            clean_string = script_tag.string.encode('utf-8').decode('utf-8')
-            json_data = json.loads(clean_string)
-            synopsis = json_data.get("description", "")
-            
-            # --- 変更点: あらすじの整形処理を追加 ---
-            synopsis = synopsis.replace("<br>", "\n") # brタグを改行に
-            for phrase in exclusion_phrases:
-                synopsis = synopsis.replace(phrase, "") # 除外フレーズを削除
-            synopsis = synopsis.strip() # 前後の空白を削除
-            # ---------------------------------------
+            try:
+                clean_string = script_tag.string.encode('utf-8').decode('utf-8')
+                json_data = json.loads(clean_string)
+                synopsis = json_data.get("description", "")
+            except Exception:
+                synopsis = "" # パース失敗時は空にする
 
-        # 2. ジャンル
+        # === 変更点: あらすじ取得の代替案を追加 ===
+        # 方法B: 方法Aで取得できなかった場合、別の場所から取得する
+        if not synopsis:
+            description_div = soup.select_one("div#comic_description p")
+            if description_div:
+                # div内の<br>タグを改行文字に変換する
+                for br in description_div.find_all("br"):
+                    br.replace_with("\n")
+                synopsis = description_div.get_text()
+
+        # 取得したあらすじの整形処理
+        synopsis = synopsis.replace("<br>", "\n")
+        for phrase in exclusion_phrases:
+            synopsis = synopsis.replace(phrase, "")
+        synopsis = synopsis.strip()
+        # =======================================
+
+        # 2. ジャンル取得
         genres = []
         genre_tags = soup.select('.category_line_f_r_l a[href*="/genre/"]')
         for tag in genre_tags:
             genre_text = tag.get_text(strip=True)
-            
-            # --- 変更点: ジャンル名の整形とリネーム処理 ---
-            cleaned_genre = genre_text.split('(')[0].strip() # (1位)などを削除
-            renamed_genre = genre_rename_map.get(cleaned_genre, cleaned_genre) # リネーム
+            cleaned_genre = genre_text.split('(')[0].strip()
+            renamed_genre = genre_rename_map.get(cleaned_genre, cleaned_genre)
             genres.append(renamed_genre)
-            # ---------------------------------------------
         
-        # 3. 雑誌・レーベル
+        # 3. 雑誌・レーベル取得
         magazine = ""
         magazine_tag = soup.select_one('span.brCramb_m > a[href*="/magazine/"]')
         if magazine_tag:
@@ -71,7 +80,9 @@ def scrape_cmoa_data(url):
 
         return {
             "synopsis": synopsis,
-            "genres": list(set(genres)),
+            # === 変更点: 順番を保持したまま重複を削除 ===
+            "genres": list(dict.fromkeys(genres)),
+            # =======================================
             "magazine": magazine,
         }
     except requests.exceptions.RequestException as e:
