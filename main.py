@@ -32,7 +32,6 @@ def scrape_cmoa_data(url):
 
         # 1. あらすじ取得
         synopsis = ""
-        # 方法A: ld+jsonから取得を試みる
         script_tag = soup.find("script", type="application/ld+json")
         if script_tag:
             try:
@@ -40,24 +39,19 @@ def scrape_cmoa_data(url):
                 json_data = json.loads(clean_string)
                 synopsis = json_data.get("description", "")
             except Exception:
-                synopsis = "" # パース失敗時は空にする
+                synopsis = ""
 
-        # === 変更点: あらすじ取得の代替案を追加 ===
-        # 方法B: 方法Aで取得できなかった場合、別の場所から取得する
         if not synopsis:
             description_div = soup.select_one("div#comic_description p")
             if description_div:
-                # div内の<br>タグを改行文字に変換する
                 for br in description_div.find_all("br"):
                     br.replace_with("\n")
                 synopsis = description_div.get_text()
 
-        # 取得したあらすじの整形処理
         synopsis = synopsis.replace("<br>", "\n")
         for phrase in exclusion_phrases:
             synopsis = synopsis.replace(phrase, "")
         synopsis = synopsis.strip()
-        # =======================================
 
         # 2. ジャンル取得
         genres = []
@@ -77,13 +71,19 @@ def scrape_cmoa_data(url):
             publisher_tag = soup.select_one('.category_line a[href*="/publisher/"]')
             if publisher_tag:
                 magazine = publisher_tag.get_text(strip=True)
+        
+        # === 変更点: 作品タグを取得する処理を追加 ===
+        tags = []
+        tag_elements = soup.select('a[href*="/tag/"]')
+        for tag_element in tag_elements:
+            tags.append(tag_element.get_text(strip=True))
+        # =======================================
 
         return {
             "synopsis": synopsis,
-            # === 変更点: 順番を保持したまま重複を削除 ===
             "genres": list(dict.fromkeys(genres)),
-            # =======================================
             "magazine": magazine,
+            "tags": list(dict.fromkeys(tags)) # 順番を保持しつつ重複を削除
         }
     except requests.exceptions.RequestException as e:
         print(f"URLへのアクセスに失敗しました: {url}, Error: {e}")
@@ -125,13 +125,18 @@ def main():
 
         if cmoa_data and cmoa_data["synopsis"]:
             try:
+                # === 変更点: Notionに書き込むデータに「タグ」を追加 ===
+                properties_to_update = {
+                    "あらすじ": {"rich_text": [{"text": {"content": cmoa_data["synopsis"]}}]},
+                    "ジャンル": {"multi_select": [{"name": g} for g in cmoa_data["genres"]]},
+                    "雑誌・レーベル": {"multi_select": [{"name": m} for m in [cmoa_data["magazine"]] if m]},
+                    "タグ": {"multi_select": [{"name": t} for t in cmoa_data["tags"]]}
+                }
+                # ===============================================
+
                 notion.pages.update(
                     page_id=page_id,
-                    properties={
-                        "あらすじ": {"rich_text": [{"text": {"content": cmoa_data["synopsis"]}}]},
-                        "ジャンル": {"multi_select": [{"name": g} for g in cmoa_data["genres"]]},
-                        "雑誌・レーベル": {"multi_select": [{"name": m} for m in [cmoa_data["magazine"]] if m]}
-                    }
+                    properties=properties_to_update
                 )
                 print(f"✅ {title} の情報を更新しました。")
             except Exception as e:
