@@ -74,11 +74,18 @@ def scrape_cmoa_data(url):
         
         # 4. 作品タグ取得
         tags = []
-        # === 変更点: タグ取得のセレクタをより正確なものに修正 ===
-        tag_elements = soup.select('div.tag_area a[href*="/tag/"]')
+        # === 変更点: ご提示のHTML構造に合わせた最終ロジック ===
+        # 「作品タグ」というテキストを持つdivを探す
+        tag_label_div = soup.find('div', class_='category_line_f_l_l', string='作品タグ')
+        if tag_label_div:
+            # その親をたどり、タグのリンクが入っているdivを探す
+            tag_container_div = tag_label_div.find_next_sibling('div', class_='category_line_f_r_l')
+            if tag_container_div:
+                # コンテナ内の全てのaタグ(リンク)を取得
+                tag_elements = tag_container_div.find_all('a')
+                for tag_element in tag_elements:
+                    tags.append(tag_element.get_text(strip=True))
         # =======================================================
-        for tag_element in tag_elements:
-            tags.append(tag_element.get_text(strip=True))
 
         return {
             "synopsis": synopsis,
