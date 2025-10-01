@@ -1,6 +1,7 @@
 import os
 import requests
 import json
+import time
 from bs4 import BeautifulSoup
 from notion_client import Client
 
@@ -26,7 +27,10 @@ def scrape_cmoa_data(url):
             '女性マンガ': '女性'
         }
 
-        response = requests.get(url, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -126,7 +130,7 @@ def main():
         page_id = page["id"]
         url = page["properties"]["URL"]["url"]
         title = page["properties"]["タイトル"]["title"][0]["plain_text"]
-        
+
         print(f"処理中: {title} ({url})")
 
         cmoa_data = scrape_cmoa_data(url)
@@ -147,6 +151,9 @@ def main():
                 print(f"✅ {title} の情報を更新しました。")
             except Exception as e:
                 print(f"❌ Notionの更新に失敗しました: {e}")
+
+        # 次のリクエストまで3秒待機
+        time.sleep(3)
 
 if __name__ == "__main__":
     main()
