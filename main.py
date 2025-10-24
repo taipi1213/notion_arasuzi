@@ -10,7 +10,12 @@ NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 DATABASE_ID = os.getenv("DATABASE_ID")
 
 # Notionクライアントの初期化
-notion = Client(auth=NOTION_API_KEY)
+try:
+    notion = Client(auth=NOTION_API_KEY)
+    print("Notionクライアントの初期化が完了しました。")
+except Exception as e:
+    print(f"Notionクライアントの初期化に失敗しました: {e}")
+    exit(1)
 
 def scrape_cmoa_data(url):
     """コミックシーモアのページからデータを取得する"""
@@ -112,15 +117,51 @@ def main():
         
     print("Notionデータベースのチェックを開始します...")
     
-    target_pages = notion.databases.query(
-        database_id=DATABASE_ID,
-        filter={
-            "and": [
-                {"property": "URL", "url": {"is_not_empty": True}},
-                {"property": "あらすじ", "rich_text": {"is_empty": True}}
-            ]
-        }
-    )
+    try:
+        # データベースの存在確認
+        print(f"データベースID: {DATABASE_ID}")
+        
+        # 利用可能なメソッドを確認
+        print(f"利用可能なdatabasesメソッド: {[method for method in dir(notion.databases) if not method.startswith('_')]}")
+        
+        target_pages = notion.databases.query(
+            database_id=DATABASE_ID,
+            filter={
+                "and": [
+                    {"property": "URL", "url": {"is_not_empty": True}},
+                    {"property": "あらすじ", "rich_text": {"is_empty": True}}
+                ]
+            }
+        )
+        print("データベースクエリが成功しました。")
+        
+    except AttributeError as e:
+        print(f"AttributeError: {e}")
+        print("databases.queryメソッドが利用できません。利用可能なメソッドを確認します。")
+        print(f"利用可能なメソッド: {[method for method in dir(notion.databases) if not method.startswith('_')]}")
+        
+        # 代替手段として、すべてのページを取得してフィルタリング
+        print("代替手段として、すべてのページを取得します...")
+        try:
+            all_pages = notion.databases.list()
+            print("すべてのページの取得に成功しました。")
+            # ここで手動フィルタリングを行う
+            target_pages = {"results": []}
+            for page in all_pages.get("results", []):
+                # プロパティを確認してフィルタリング
+                properties = page.get("properties", {})
+                if "URL" in properties and "あらすじ" in properties:
+                    url_prop = properties["URL"]
+                    synopsis_prop = properties["あらすじ"]
+                    if (url_prop.get("url") and 
+                        (not synopsis_prop.get("rich_text") or len(synopsis_prop.get("rich_text", [])) == 0)):
+                        target_pages["results"].append(page)
+        except Exception as fallback_error:
+            print(f"代替手段でもエラーが発生しました: {fallback_error}")
+            return
+    except Exception as e:
+        print(f"データベースクエリでエラーが発生しました: {e}")
+        return
 
     if not target_pages["results"]:
         print("処理対象のページは見つかりませんでした。")
