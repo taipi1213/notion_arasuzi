@@ -156,9 +156,9 @@ def main():
         print("ページ一覧を取得中...")
         all_pages_results = []
         
-        # 方法1: pages.listメソッドを試行
+        # 方法1: databases.queryメソッドを試行（推奨）
         try:
-            print("pages.listメソッドを試行中...")
+            print("databases.queryメソッドを試行中...")
             has_more = True
             start_cursor = None
             page_count = 0
@@ -166,9 +166,16 @@ def main():
             while has_more and page_count < 10:  # 最大10ページまで取得（1000件）
                 try:
                     if start_cursor:
-                        response = notion.pages.list(database_id=DATABASE_ID, page_size=100, start_cursor=start_cursor)
+                        response = notion.databases.query(
+                            database_id=DATABASE_ID, 
+                            page_size=100, 
+                            start_cursor=start_cursor
+                        )
                     else:
-                        response = notion.pages.list(database_id=DATABASE_ID, page_size=100)
+                        response = notion.databases.query(
+                            database_id=DATABASE_ID, 
+                            page_size=100
+                        )
                     
                     all_pages_results.extend(response.get("results", []))
                     has_more = response.get("has_more", False)
@@ -181,41 +188,86 @@ def main():
                     print(f"ページ取得エラー: {page_error}")
                     break
             
-            print(f"pages.listメソッドで取得完了。総ページ数: {len(all_pages_results)}")
+            print(f"databases.queryメソッドで取得完了。総ページ数: {len(all_pages_results)}")
             
-        except Exception as list_error:
-            print(f"pages.listメソッドが利用できません: {list_error}")
+        except Exception as query_error:
+            print(f"databases.queryメソッドが利用できません: {query_error}")
             
-            # 方法2: databases.queryメソッドを試行（利用可能な場合）
+            # 方法2: pages.listメソッドを試行（フォールバック）
             try:
-                print("databases.queryメソッドを試行中...")
-                query_response = notion.databases.query(database_id=DATABASE_ID, page_size=100)
-                all_pages_results = query_response.get("results", [])
-                print(f"databases.queryメソッドで取得完了。総ページ数: {len(all_pages_results)}")
+                print("pages.listメソッドを試行中...")
+                has_more = True
+                start_cursor = None
+                page_count = 0
                 
-            except Exception as query_error:
-                print(f"databases.queryメソッドも利用できません: {query_error}")
+                while has_more and page_count < 10:  # 最大10ページまで取得（1000件）
+                    try:
+                        if start_cursor:
+                            response = notion.pages.list(database_id=DATABASE_ID, page_size=100, start_cursor=start_cursor)
+                        else:
+                            response = notion.pages.list(database_id=DATABASE_ID, page_size=100)
+                        
+                        all_pages_results.extend(response.get("results", []))
+                        has_more = response.get("has_more", False)
+                        start_cursor = response.get("next_cursor")
+                        page_count += 1
+                        
+                        print(f"ページ {page_count} 取得完了。累計: {len(all_pages_results)}件")
+                        
+                    except Exception as page_error:
+                        print(f"ページ取得エラー: {page_error}")
+                        break
+                
+                print(f"pages.listメソッドで取得完了。総ページ数: {len(all_pages_results)}")
+                
+            except Exception as list_error:
+                print(f"pages.listメソッドも利用できません: {list_error}")
                 print("利用可能なメソッドでページを取得できませんでした。")
                 return
         
         # 手動でフィルタリング
         print("対象ページをフィルタリング中...")
         target_pages = {"results": []}
-        for page in all_pages_results:
+        
+        # デバッグ用の統計情報
+        total_pages = len(all_pages_results)
+        pages_with_url = 0
+        pages_without_synopsis = 0
+        pages_with_both = 0
+        
+        for i, page in enumerate(all_pages_results):
             page_properties = page.get("properties", {})
             
             # URLプロパティの確認
             url_prop = page_properties.get("URL", {})
             has_url = url_prop.get("url") is not None and url_prop.get("url") != ""
+            if has_url:
+                pages_with_url += 1
             
             # あらすじプロパティの確認
             synopsis_prop = page_properties.get("あらすじ", {})
             synopsis_text = synopsis_prop.get("rich_text", [])
             has_no_synopsis = not synopsis_text or len(synopsis_text) == 0
+            if has_no_synopsis:
+                pages_without_synopsis += 1
             
+            # 両方の条件を満たす場合
             if has_url and has_no_synopsis:
+                pages_with_both += 1
                 target_pages["results"].append(page)
+                
+                # 最初の数件の詳細を表示
+                if pages_with_both <= 3:
+                    title_prop = page_properties.get("タイトル", {})
+                    title = title_prop.get("title", [{}])[0].get("plain_text", "タイトルなし")
+                    url = url_prop.get("url", "")
+                    print(f"  対象ページ {pages_with_both}: {title} - {url}")
         
+        print(f"フィルタリング統計:")
+        print(f"  総ページ数: {total_pages}")
+        print(f"  URLが設定されているページ: {pages_with_url}")
+        print(f"  あらすじが空のページ: {pages_without_synopsis}")
+        print(f"  対象ページ（URLあり + あらすじ空）: {pages_with_both}")
         print(f"フィルタリング完了。対象ページ数: {len(target_pages['results'])}")
         
     except Exception as e:
