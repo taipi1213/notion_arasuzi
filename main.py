@@ -2,8 +2,13 @@ import os
 import requests
 import json
 import time
+import sys
+import io
 from bs4 import BeautifulSoup
 from notion_client import Client
+
+# 文字エンコーディングの問題を解決
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # --- 設定項目 (GitHub Secretsから読み込む) ---
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
@@ -121,9 +126,8 @@ def main():
         # データベースの存在確認
         print(f"データベースID: {DATABASE_ID}")
         
-        # 利用可能なメソッドを確認
-        print(f"利用可能なdatabasesメソッド: {[method for method in dir(notion.databases) if not method.startswith('_')]}")
-        
+        # データベースクエリを実行
+        print("データベースクエリを実行中...")
         target_pages = notion.databases.query(
             database_id=DATABASE_ID,
             filter={
@@ -133,29 +137,33 @@ def main():
                 ]
             }
         )
-        print("データベースクエリが成功しました。")
+        print(f"データベースクエリが成功しました。対象ページ数: {len(target_pages.get('results', []))}")
         
     except AttributeError as e:
         print(f"AttributeError: {e}")
         print("databases.queryメソッドが利用できません。利用可能なメソッドを確認します。")
         print(f"利用可能なメソッド: {[method for method in dir(notion.databases) if not method.startswith('_')]}")
         
-        # 代替手段として、すべてのページを取得してフィルタリング
-        print("代替手段として、すべてのページを取得します...")
+        # 代替手段として、データベース情報を取得してプロパティを確認
+        print("代替手段として、データベース情報を取得します...")
         try:
-            all_pages = notion.databases.list()
-            print("すべてのページの取得に成功しました。")
-            # ここで手動フィルタリングを行う
-            target_pages = {"results": []}
-            for page in all_pages.get("results", []):
-                # プロパティを確認してフィルタリング
-                properties = page.get("properties", {})
-                if "URL" in properties and "あらすじ" in properties:
-                    url_prop = properties["URL"]
-                    synopsis_prop = properties["あらすじ"]
-                    if (url_prop.get("url") and 
-                        (not synopsis_prop.get("rich_text") or len(synopsis_prop.get("rich_text", [])) == 0)):
-                        target_pages["results"].append(page)
+            db_info = notion.databases.retrieve(database_id=DATABASE_ID)
+            print("データベース情報の取得に成功しました。")
+            print(f"データベースタイトル: {db_info.get('title', [{}])[0].get('plain_text', 'N/A')}")
+            print(f"利用可能なプロパティ: {list(db_info.get('properties', {}).keys())}")
+            
+            # プロパティの詳細を確認
+            properties = db_info.get('properties', {})
+            if 'URL' in properties:
+                print(f"URLプロパティのタイプ: {properties['URL'].get('type')}")
+            if 'あらすじ' in properties:
+                print(f"あらすじプロパティのタイプ: {properties['あらすじ'].get('type')}")
+            
+            # 基本的なクエリを再試行
+            print("基本的なクエリを再試行します...")
+            target_pages = notion.databases.query(database_id=DATABASE_ID, page_size=5)
+            print(f"基本クエリが成功しました。取得ページ数: {len(target_pages.get('results', []))}")
+            
         except Exception as fallback_error:
             print(f"代替手段でもエラーが発生しました: {fallback_error}")
             return
@@ -167,16 +175,25 @@ def main():
         print("処理対象のページは見つかりませんでした。")
         return
 
-    for page in target_pages["results"]:
+    print(f"\n処理対象のページ数: {len(target_pages['results'])}")
+    
+    for i, page in enumerate(target_pages["results"], 1):
         page_id = page["id"]
         url = page["properties"]["URL"]["url"]
         title = page["properties"]["タイトル"]["title"][0]["plain_text"]
 
-        print(f"処理中: {title} ({url})")
+        print(f"\n[{i}/{len(target_pages['results'])}] 処理中: {title}")
+        print(f"URL: {url}")
 
         cmoa_data = scrape_cmoa_data(url)
 
         if cmoa_data and cmoa_data["synopsis"]:
+            print(f"取得したデータ:")
+            print(f"  あらすじ: {cmoa_data['synopsis'][:100]}...")
+            print(f"  ジャンル: {cmoa_data['genres']}")
+            print(f"  雑誌・レーベル: {cmoa_data['magazine']}")
+            print(f"  タグ: {cmoa_data['tags']}")
+            
             try:
                 properties_to_update = {
                     "あらすじ": {"rich_text": [{"text": {"content": cmoa_data["synopsis"]}}]},
@@ -189,12 +206,16 @@ def main():
                     page_id=page_id,
                     properties=properties_to_update
                 )
-                print(f"✅ {title} の情報を更新しました。")
+                print(f"成功: {title} の情報を更新しました。")
             except Exception as e:
-                print(f"❌ Notionの更新に失敗しました: {e}")
+                print(f"Notionの更新に失敗しました: {e}")
+        else:
+            print(f"データ取得に失敗またはあらすじが空です。")
 
         # 次のリクエストまで3秒待機
         time.sleep(3)
+    
+    print(f"\n処理が完了しました。{len(target_pages['results'])}件のページを処理しました。")
 
 if __name__ == "__main__":
     main()
