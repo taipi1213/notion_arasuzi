@@ -3,9 +3,9 @@ name: Notion Manga Sync
 
 # ワークフローを実行するタイミング
 on:
-  # 15分ごとに自動実行
+  # 1時間ごとに自動実行
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 * * * *'
   # Actionsタブから手動で実行できるようにする
   workflow_dispatch:
 
