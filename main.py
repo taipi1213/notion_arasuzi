@@ -18,6 +18,18 @@ DATABASE_ID = os.getenv("DATABASE_ID")
 try:
     notion = Client(auth=NOTION_API_KEY)
     print("Notionクライアントの初期化が完了しました。")
+    
+    # 利用可能なメソッドを確認
+    print(f"利用可能なdatabasesメソッド: {[method for method in dir(notion.databases) if not method.startswith('_')]}")
+    print(f"利用可能なpagesメソッド: {[method for method in dir(notion.pages) if not method.startswith('_')]}")
+    
+    # Notion APIクライアントのバージョン情報を表示
+    try:
+        import notion_client
+        print(f"Notion APIクライアントバージョン: {notion_client.__version__}")
+    except:
+        print("Notion APIクライアントのバージョン情報を取得できませんでした")
+    
 except Exception as e:
     print(f"Notionクライアントの初期化に失敗しました: {e}")
     exit(1)
@@ -126,49 +138,88 @@ def main():
         # データベースの存在確認
         print(f"データベースID: {DATABASE_ID}")
         
-        # データベースクエリを実行
-        print("データベースクエリを実行中...")
-        target_pages = notion.databases.query(
-            database_id=DATABASE_ID,
-            filter={
-                "and": [
-                    {"property": "URL", "url": {"is_not_empty": True}},
-                    {"property": "あらすじ", "rich_text": {"is_empty": True}}
-                ]
-            }
-        )
-        print(f"データベースクエリが成功しました。対象ページ数: {len(target_pages.get('results', []))}")
+        # データベース情報を取得
+        print("データベース情報を取得中...")
+        db_info = notion.databases.retrieve(database_id=DATABASE_ID)
+        print("データベース情報の取得に成功しました。")
+        print(f"データベースタイトル: {db_info.get('title', [{}])[0].get('plain_text', 'N/A')}")
+        print(f"利用可能なプロパティ: {list(db_info.get('properties', {}).keys())}")
         
-    except AttributeError as e:
-        print(f"AttributeError: {e}")
-        print("databases.queryメソッドが利用できません。利用可能なメソッドを確認します。")
-        print(f"利用可能なメソッド: {[method for method in dir(notion.databases) if not method.startswith('_')]}")
+        # プロパティの詳細を確認
+        properties = db_info.get('properties', {})
+        if 'URL' in properties:
+            print(f"URLプロパティのタイプ: {properties['URL'].get('type')}")
+        if 'あらすじ' in properties:
+            print(f"あらすじプロパティのタイプ: {properties['あらすじ'].get('type')}")
         
-        # 代替手段として、データベース情報を取得してプロパティを確認
-        print("代替手段として、データベース情報を取得します...")
+        # ページを取得（複数の方法を試行）
+        print("ページ一覧を取得中...")
+        all_pages_results = []
+        
+        # 方法1: pages.listメソッドを試行
         try:
-            db_info = notion.databases.retrieve(database_id=DATABASE_ID)
-            print("データベース情報の取得に成功しました。")
-            print(f"データベースタイトル: {db_info.get('title', [{}])[0].get('plain_text', 'N/A')}")
-            print(f"利用可能なプロパティ: {list(db_info.get('properties', {}).keys())}")
+            print("pages.listメソッドを試行中...")
+            has_more = True
+            start_cursor = None
+            page_count = 0
             
-            # プロパティの詳細を確認
-            properties = db_info.get('properties', {})
-            if 'URL' in properties:
-                print(f"URLプロパティのタイプ: {properties['URL'].get('type')}")
-            if 'あらすじ' in properties:
-                print(f"あらすじプロパティのタイプ: {properties['あらすじ'].get('type')}")
+            while has_more and page_count < 10:  # 最大10ページまで取得（1000件）
+                try:
+                    if start_cursor:
+                        response = notion.pages.list(database_id=DATABASE_ID, page_size=100, start_cursor=start_cursor)
+                    else:
+                        response = notion.pages.list(database_id=DATABASE_ID, page_size=100)
+                    
+                    all_pages_results.extend(response.get("results", []))
+                    has_more = response.get("has_more", False)
+                    start_cursor = response.get("next_cursor")
+                    page_count += 1
+                    
+                    print(f"ページ {page_count} 取得完了。累計: {len(all_pages_results)}件")
+                    
+                except Exception as page_error:
+                    print(f"ページ取得エラー: {page_error}")
+                    break
             
-            # 基本的なクエリを再試行
-            print("基本的なクエリを再試行します...")
-            target_pages = notion.databases.query(database_id=DATABASE_ID, page_size=5)
-            print(f"基本クエリが成功しました。取得ページ数: {len(target_pages.get('results', []))}")
+            print(f"pages.listメソッドで取得完了。総ページ数: {len(all_pages_results)}")
             
-        except Exception as fallback_error:
-            print(f"代替手段でもエラーが発生しました: {fallback_error}")
-            return
+        except Exception as list_error:
+            print(f"pages.listメソッドが利用できません: {list_error}")
+            
+            # 方法2: databases.queryメソッドを試行（利用可能な場合）
+            try:
+                print("databases.queryメソッドを試行中...")
+                query_response = notion.databases.query(database_id=DATABASE_ID, page_size=100)
+                all_pages_results = query_response.get("results", [])
+                print(f"databases.queryメソッドで取得完了。総ページ数: {len(all_pages_results)}")
+                
+            except Exception as query_error:
+                print(f"databases.queryメソッドも利用できません: {query_error}")
+                print("利用可能なメソッドでページを取得できませんでした。")
+                return
+        
+        # 手動でフィルタリング
+        print("対象ページをフィルタリング中...")
+        target_pages = {"results": []}
+        for page in all_pages_results:
+            page_properties = page.get("properties", {})
+            
+            # URLプロパティの確認
+            url_prop = page_properties.get("URL", {})
+            has_url = url_prop.get("url") is not None and url_prop.get("url") != ""
+            
+            # あらすじプロパティの確認
+            synopsis_prop = page_properties.get("あらすじ", {})
+            synopsis_text = synopsis_prop.get("rich_text", [])
+            has_no_synopsis = not synopsis_text or len(synopsis_text) == 0
+            
+            if has_url and has_no_synopsis:
+                target_pages["results"].append(page)
+        
+        print(f"フィルタリング完了。対象ページ数: {len(target_pages['results'])}")
+        
     except Exception as e:
-        print(f"データベースクエリでエラーが発生しました: {e}")
+        print(f"データベース処理でエラーが発生しました: {e}")
         return
 
     if not target_pages["results"]:
