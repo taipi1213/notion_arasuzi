@@ -138,19 +138,70 @@ def main():
         # データベースの存在確認
         print(f"データベースID: {DATABASE_ID}")
         
-        # データベース情報を取得
+        # データベース情報を取得（新しいAPIバージョン対応）
         print("データベース情報を取得中...")
-        db_info = notion.databases.retrieve(database_id=DATABASE_ID)
-        print("データベース情報の取得に成功しました。")
-        print(f"データベースタイトル: {db_info.get('title', [{}])[0].get('plain_text', 'N/A')}")
-        print(f"利用可能なプロパティ: {list(db_info.get('properties', {}).keys())}")
         
-        # プロパティの詳細を確認
-        properties = db_info.get('properties', {})
-        if 'URL' in properties:
-            print(f"URLプロパティのタイプ: {properties['URL'].get('type')}")
-        if 'あらすじ' in properties:
-            print(f"あらすじプロパティのタイプ: {properties['あらすじ'].get('type')}")
+        # まず新しいAPIバージョンでデータベース情報を取得
+        headers = {
+            'Authorization': f'Bearer {NOTION_API_KEY}',
+            'Notion-Version': '2025-09-03',
+            'Content-Type': 'application/json'
+        }
+        
+        try:
+            db_response = requests.get(
+                f'https://api.notion.com/v1/databases/{DATABASE_ID}',
+                headers=headers,
+                timeout=30
+            )
+            
+            if db_response.status_code == 200:
+                db_info = db_response.json()
+                print("データベース情報の取得に成功しました。")
+                print(f"データベースタイトル: {db_info.get('title', [{}])[0].get('plain_text', 'N/A')}")
+                
+                # データソース情報を取得
+                data_sources = db_info.get('data_sources', [])
+                print(f"データソース数: {len(data_sources)}")
+                
+                if data_sources:
+                    data_source_id = data_sources[0]['id']
+                    print(f"使用するデータソースID: {data_source_id}")
+                else:
+                    print("データソースが見つかりません。")
+                    return
+                
+                # プロパティ情報を取得（データソースから）
+                print("データソースのプロパティ情報を取得中...")
+                ds_response = requests.get(
+                    f'https://api.notion.com/v1/data_sources/{data_source_id}',
+                    headers=headers,
+                    timeout=30
+                )
+                
+                if ds_response.status_code == 200:
+                    ds_info = ds_response.json()
+                    properties = ds_info.get('properties', {})
+                    print(f"利用可能なプロパティ: {list(properties.keys())}")
+                    
+                    if 'URL' in properties:
+                        print(f"URLプロパティのタイプ: {properties['URL'].get('type')}")
+                    if 'あらすじ' in properties:
+                        print(f"あらすじプロパティのタイプ: {properties['あらすじ'].get('type')}")
+                else:
+                    print(f"データソース情報の取得に失敗しました: {ds_response.status_code}")
+                    # フォールバック: 古い方法でプロパティを取得
+                    properties = db_info.get('properties', {})
+                    print(f"フォールバック - 利用可能なプロパティ: {list(properties.keys())}")
+                    
+            else:
+                print(f"データベース情報の取得に失敗しました: {db_response.status_code}")
+                print(f"エラー内容: {db_response.text}")
+                return
+                
+        except Exception as db_error:
+            print(f"データベース情報の取得中にエラーが発生しました: {db_error}")
+            return
         
         # ページを取得（利用可能なメソッドのみを使用）
         print("ページ一覧を取得中...")
@@ -179,12 +230,12 @@ def main():
                 # Notion APIのRESTエンドポイントを直接使用
                 headers = {
                     'Authorization': f'Bearer {NOTION_API_KEY}',
-                    'Notion-Version': '2022-06-28',
+                    'Notion-Version': '2025-09-03',
                     'Content-Type': 'application/json'
                 }
                 
-                # データベースクエリのREST APIエンドポイント
-                url = f'https://api.notion.com/v1/databases/{DATABASE_ID}/query'
+                # データソースクエリのREST APIエンドポイント（新しいAPIバージョン）
+                url = f'https://api.notion.com/v1/data_sources/{data_source_id}/query'
                 
                 print(f"REST APIエンドポイント: {url}")
                 
