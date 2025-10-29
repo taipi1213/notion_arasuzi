@@ -239,15 +239,24 @@ def main():
                 
                 print(f"REST APIエンドポイント: {url}")
                 
-                # ページネーション処理
+                # ページネーション処理（最新のページから順番に取得）
                 has_more = True
                 start_cursor = None
                 page_count = 0
+                max_pages_to_check = 50  # 最大50ページ（5000件）までチェック
+                target_pages_found = 0
+                max_target_pages = 100  # 最大100件の対象ページを見つけたら停止
                 
-                while has_more and page_count < 10:  # 最大10ページまで取得（1000件）
+                while has_more and page_count < max_pages_to_check:
                     try:
                         payload = {
-                            "page_size": 100
+                            "page_size": 100,
+                            "sorts": [
+                                {
+                                    "property": "ID",
+                                    "direction": "descending"
+                                }
+                            ]
                         }
                         
                         if start_cursor:
@@ -258,12 +267,44 @@ def main():
                         
                         if response.status_code == 200:
                             data = response.json()
-                            all_pages_results.extend(data.get("results", []))
+                            batch_results = data.get("results", [])
+                            
+                            # このバッチ内で対象ページをカウント
+                            batch_target_count = 0
+                            for page in batch_results:
+                                page_properties = page.get("properties", {})
+                                
+                                # URLプロパティの確認
+                                url_prop = page_properties.get("URL", {})
+                                has_url = url_prop.get("url") is not None and url_prop.get("url") != ""
+                                
+                                # あらすじプロパティの確認
+                                synopsis_prop = page_properties.get("あらすじ", {})
+                                synopsis_text = synopsis_prop.get("rich_text", [])
+                                synopsis_content = ""
+                                if synopsis_text and len(synopsis_text) > 0:
+                                    synopsis_content = synopsis_text[0].get("plain_text", "").strip()
+                                
+                                has_no_synopsis = not synopsis_content or synopsis_content == ""
+                                
+                                if has_url and has_no_synopsis:
+                                    batch_target_count += 1
+                            
+                            all_pages_results.extend(batch_results)
+                            target_pages_found += batch_target_count
                             has_more = data.get("has_more", False)
                             start_cursor = data.get("next_cursor")
                             page_count += 1
                             
-                            print(f"ページ {page_count} 取得完了。累計: {len(all_pages_results)}件")
+                            print(f"ページ {page_count} 取得完了。今回: {len(batch_results)}件、対象: {batch_target_count}件、累計: {len(all_pages_results)}件、対象累計: {target_pages_found}件")
+                            
+                            # 十分な対象ページが見つかったら停止
+                            if target_pages_found >= max_target_pages:
+                                print(f"対象ページが{max_target_pages}件に達したため、処理を停止します。")
+                                break
+                            
+                            # レート制限を考慮して少し待機
+                            time.sleep(0.1)
                         else:
                             print(f"REST APIエラー: {response.status_code} - {response.text}")
                             break
@@ -272,7 +313,8 @@ def main():
                         print(f"REST APIリクエストエラー: {rest_error}")
                         break
                 
-                print(f"REST APIで取得完了。総ページ数: {len(all_pages_results)}")
+                print(f"REST APIで取得完了。総ページ数: {len(all_pages_results)}件 (全{page_count}ページ)")
+                print(f"対象ページ（URLあり + あらすじ空）: {target_pages_found}件")
                 
                 if not all_pages_results:
                     print("REST APIでもページを取得できませんでした。")
@@ -305,7 +347,11 @@ def main():
             # あらすじプロパティの確認
             synopsis_prop = page_properties.get("あらすじ", {})
             synopsis_text = synopsis_prop.get("rich_text", [])
-            has_no_synopsis = not synopsis_text or len(synopsis_text) == 0
+            synopsis_content = ""
+            if synopsis_text and len(synopsis_text) > 0:
+                synopsis_content = synopsis_text[0].get("plain_text", "").strip()
+            
+            has_no_synopsis = not synopsis_content or synopsis_content == ""
             if has_no_synopsis:
                 pages_without_synopsis += 1
             
