@@ -152,77 +152,84 @@ def main():
         if 'あらすじ' in properties:
             print(f"あらすじプロパティのタイプ: {properties['あらすじ'].get('type')}")
         
-        # ページを取得（複数の方法を試行）
+        # ページを取得（利用可能なメソッドのみを使用）
         print("ページ一覧を取得中...")
         all_pages_results = []
         
-        # 方法1: databases.queryメソッドを試行（推奨）
-        try:
-            print("databases.queryメソッドを試行中...")
-            has_more = True
-            start_cursor = None
-            page_count = 0
-            
-            while has_more and page_count < 10:  # 最大10ページまで取得（1000件）
-                try:
-                    if start_cursor:
-                        response = notion.databases.query(
-                            database_id=DATABASE_ID, 
-                            page_size=100, 
-                            start_cursor=start_cursor
-                        )
-                    else:
-                        response = notion.databases.query(
-                            database_id=DATABASE_ID, 
-                            page_size=100
-                        )
-                    
-                    all_pages_results.extend(response.get("results", []))
-                    has_more = response.get("has_more", False)
-                    start_cursor = response.get("next_cursor")
-                    page_count += 1
-                    
-                    print(f"ページ {page_count} 取得完了。累計: {len(all_pages_results)}件")
-                    
-                except Exception as page_error:
-                    print(f"ページ取得エラー: {page_error}")
-                    break
-            
-            print(f"databases.queryメソッドで取得完了。総ページ数: {len(all_pages_results)}")
-            
-        except Exception as query_error:
-            print(f"databases.queryメソッドが利用できません: {query_error}")
-            
-            # 方法2: pages.listメソッドを試行（フォールバック）
+        # 利用可能なメソッドを確認
+        available_methods = [method for method in dir(notion.databases) if not method.startswith('_')]
+        print(f"利用可能なdatabasesメソッド: {available_methods}")
+        
+        # 方法1: databases.listメソッドを試行（利用可能な場合）
+        if 'list' in available_methods:
             try:
-                print("pages.listメソッドを試行中...")
+                print("databases.listメソッドを試行中...")
+                response = notion.databases.list()
+                all_pages_results = response.get("results", [])
+                print(f"databases.listメソッドで取得完了。総ページ数: {len(all_pages_results)}")
+                
+            except Exception as list_error:
+                print(f"databases.listメソッドでエラーが発生しました: {list_error}")
+                all_pages_results = []
+        
+        # 方法2: REST APIを直接使用してページを取得
+        if not all_pages_results:
+            print("代替手段として、REST APIを直接使用してページを取得します...")
+            try:
+                # Notion APIのRESTエンドポイントを直接使用
+                headers = {
+                    'Authorization': f'Bearer {NOTION_API_KEY}',
+                    'Notion-Version': '2022-06-28',
+                    'Content-Type': 'application/json'
+                }
+                
+                # データベースクエリのREST APIエンドポイント
+                url = f'https://api.notion.com/v1/databases/{DATABASE_ID}/query'
+                
+                print(f"REST APIエンドポイント: {url}")
+                
+                # ページネーション処理
                 has_more = True
                 start_cursor = None
                 page_count = 0
                 
                 while has_more and page_count < 10:  # 最大10ページまで取得（1000件）
                     try:
+                        payload = {
+                            "page_size": 100
+                        }
+                        
                         if start_cursor:
-                            response = notion.pages.list(database_id=DATABASE_ID, page_size=100, start_cursor=start_cursor)
+                            payload["start_cursor"] = start_cursor
+                        
+                        print(f"REST APIリクエスト送信中... (ページ {page_count + 1})")
+                        response = requests.post(url, headers=headers, json=payload, timeout=30)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            all_pages_results.extend(data.get("results", []))
+                            has_more = data.get("has_more", False)
+                            start_cursor = data.get("next_cursor")
+                            page_count += 1
+                            
+                            print(f"ページ {page_count} 取得完了。累計: {len(all_pages_results)}件")
                         else:
-                            response = notion.pages.list(database_id=DATABASE_ID, page_size=100)
-                        
-                        all_pages_results.extend(response.get("results", []))
-                        has_more = response.get("has_more", False)
-                        start_cursor = response.get("next_cursor")
-                        page_count += 1
-                        
-                        print(f"ページ {page_count} 取得完了。累計: {len(all_pages_results)}件")
-                        
-                    except Exception as page_error:
-                        print(f"ページ取得エラー: {page_error}")
+                            print(f"REST APIエラー: {response.status_code} - {response.text}")
+                            break
+                            
+                    except Exception as rest_error:
+                        print(f"REST APIリクエストエラー: {rest_error}")
                         break
                 
-                print(f"pages.listメソッドで取得完了。総ページ数: {len(all_pages_results)}")
+                print(f"REST APIで取得完了。総ページ数: {len(all_pages_results)}")
                 
-            except Exception as list_error:
-                print(f"pages.listメソッドも利用できません: {list_error}")
-                print("利用可能なメソッドでページを取得できませんでした。")
+                if not all_pages_results:
+                    print("REST APIでもページを取得できませんでした。")
+                    print("データベースの権限設定を確認してください。")
+                    return
+                
+            except Exception as rest_error:
+                print(f"REST API使用中にエラーが発生しました: {rest_error}")
                 return
         
         # 手動でフィルタリング
